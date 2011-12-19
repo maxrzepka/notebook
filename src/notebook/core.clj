@@ -42,6 +42,9 @@
       (recur (last (:content note)) (conj path :content (dec (count (:content note)))))
       path)))
 
+(defn new-node-path[note]
+  (let [path (last-node-path
+
 (defn append [{current :current :as note} e]
                  (let [node (detect-node e)
                        type (:type node)
@@ -53,7 +56,7 @@
                          (assoc (assoc-in note new-path node )
                            :current :empty)
                          (and (= type nil) (= :empty current));; start paragraph
-                         (update-in note (new-path) conj {:type :paragraph :text [e]})
+                         (update-in note new-path conj {:type :paragraph :text [e]})
                          (or (= :empty type) (= type nil)) ;;append text to last node
                          (update-in note (conj path :text) conj e)
                          :else
@@ -72,4 +75,16 @@ user> (def n4 (n/append {:current :note :type :note :content []} "# title "))
 user> (n/append n4 "")
 {:current :empty, :type :note, :content [{:type :section, :depth 1, :title "title", :content []}]}
 user> (n/append (n/append n4 "") "wertwe")
+
+(def root-loc (z/zipper :content (comp seq :content) #( update-in %1 [:content] conj %2 ) {:current :note :type :note :content []} ))
+user> (z/node loc-root)
+{:current :note, :type :note, :content []}
+
+user> (z/append-child loc-root {:type :section})
+;; clojure.lang.PersistentArrayMap cannot be cast to java.util.Map$Entry 
+;; on conj
+
+user> (update-in {:current :note, :type :note, :content []} [:content] conj  {:type :section})
+{:current :note, :type :note, :content [{:type :section}]}
+
 )
