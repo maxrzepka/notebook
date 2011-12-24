@@ -1,5 +1,6 @@
 (ns notebook.core
-  (require [clojure.java.io :as io]))
+  (require [clojure.java.io :as io]
+           [clojure.zip :as z]))
 
 (defn file-resource[path]
   (-> (clojure.lang.RT/baseLoader)
@@ -10,62 +11,48 @@
 (defn join-str[ separator coll ]
   (apply str (next (interleave (repeat separator) coll))))
 
+(def markers {:section "#" :list-item "+" :code "'''"})
+
 (def parsers {:section (fn[tokens] {:depth (count (first tokens)) :title (join-str " " (next tokens)) :content []})
               :list-item (fn[tokens] {:depth (count (first tokens)) :title (join-str " " (next tokens)) :text []})
               :code (fn[tokens] {:language (first tokens) :name (second tokens)})})
-                         
 
-(defn tokens->node[tokens]
-  (if (seq tokens)
-   (let [starts { "#" :section "+" :list-item "'''" :code }
-        ;; parsers {:section (fn[
-        ;; ss (.substring start 0 1)
-        k (first (filter #(.startsWith (first tokens) %) (keys starts)))
-        
-        type (starts k)
-         ]
-     (if type 
-       (assoc ((parsers type (constantly {})) tokens) :type type )
-       nil))
-   {:type :empty}))
+(defn line->node[line]
+  (let [tokens (remove empty? (seq (.split line " ")))
+        ;; detect if special line : starts with markers
+        markers (zipmap (vals markers) (keys markers))
+        k (if (seq tokens) (first (filter #(.startsWith (first tokens) %) (keys markers))))]
+    (assoc (if k
+             (let [type (markers k)]
+               (assoc ((parsers type (constantly {})) tokens) :type type ))
+             {:text line})
+      :empty (nil? (seq tokens)))))
 
-(defn detect-node [line]
-  (let [tokens  (remove empty? (seq (.split line " ")))]
-    (tokens->node tokens)))
+(defn append-node[loc node]
+  (-> loc (z/append-child node) z/down z/rightmost))
 
-(defn last-node[note]
-  (last (tree-seq (comp seq :content) (comp seq :content) note)))
-
-(defn last-node-path[note]
-  (loop [note note path []]
-    (if (:content note) ;; (map? (last (:content note))))
-      (recur (last (:content note)) (conj path :content (dec (count (:content note)))))
-      path)))
-
-(defn new-node-path[note]
-  (let [path (last-node-path
-
-(defn append [{current :current :as note} e]
-                 (let [node (detect-node e)
-                       type (:type node)
-                       path (last-node-path note)
-                       new-path (update-in path [(dec (count path))] inc)]
-                   (cond (= type current) ;;end of tag
-                         (assoc note :current :empty)
-                         (#{ :list-item :section } type);; deal with depth
-                         (assoc (assoc-in note new-path node )
-                           :current :empty)
-                         (and (= type nil) (= :empty current));; start paragraph
-                         (update-in note new-path conj {:type :paragraph :text [e]})
-                         (or (= :empty type) (= type nil)) ;;append text to last node
-                         (update-in note (conj path :text) conj e)
-                         :else
-                         (assoc (assoc-in note new-path node ) :current type))))
-
+(defn append[loc line]
+  (let [node (line->node line)]
+    (cond (and (:text node)
+               (#{:paragraph :code} (:type (z/node loc)))) ;;text to append to existing text node
+          (z/edit loc update-in [:content] conj (:text node))
+          (and (not (:empty node)) (:text node));;create paragraph with an non-empty line
+          (append-node loc (assoc node :type :paragraph))
+          ;;detect end of paragraph or end of code
+          (or (and (:empty node) (= :paragraph (:type (z/node loc))))
+              (= :code (:type node) (:type (z/node loc))))
+          (z/up loc)
+          ;;TODO handle list and section hierarchy
+          :else ;;just insert new child 
+          (append-node loc node)          
+          )))
+    
 (defn transform[coll]
+  (z/root
     (reduce append
-            {:current :note :type :note :content []}
-            coll))
+            (z/zipper :content (comp seq :content) #(assoc %1 :content %2)
+                      {:current :note :type :note :content []})
+            coll)))
 
 (comment
   user> (n/append {:current :note :type :note :content []} "# title ")
@@ -87,4 +74,5 @@ user> (z/append-child loc-root {:type :section})
 user> (update-in {:current :note, :type :note, :content []} [:content] conj  {:type :section})
 {:current :note, :type :note, :content [{:type :section}]}
 
+(def s (n/transform ["# title" "" "line 1" "line 2" "" "'''clojure notebook" "(ns core)" "" "(println \"coucou\")" "'''" "" "line 1 of second paragraph"]))
 )
