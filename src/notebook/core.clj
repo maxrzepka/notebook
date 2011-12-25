@@ -8,15 +8,33 @@
       io/reader
       line-seq))
 
+;; only use to build title from token 
 (defn join-str[ separator coll ]
   (apply str (next (interleave (repeat separator) coll))))
 
+;; define all type of marker lines ( section , list , code )
+;; A line is a marker line if starting with specific string otherwise line is a plain line
 (def markers {:section "#" :list-item "+" :code "'''"})
 
+;; For each type of marker line extract information from the line to build node map
+;; only use by line->node 
+;; TODO common pattern : function extract at the beginning of the line the mark
+;;  tokens -> [mark tokens]
 (def parsers {:section (fn[tokens] {:depth (count (first tokens)) :title (join-str " " (next tokens)) :content []})
               :list-item (fn[tokens] {:depth (count (first tokens)) :title (join-str " " (next tokens)) :text []})
-              :code (fn[tokens] {:language (first tokens) :name (second tokens)})})
+              :code (fn[tokens]
+                      (let [mark (:code markers)
+                            ;;common pattern : extract mark from tokens (cf todo)
+                            start (first tokens)
+                            tokens (cond (= mark start)
+                                         (next tokens)
+                                         (.startsWith start mark)
+                                         (cons (.substring start (.length mark)) (next tokens)))]
+                            (zipmap [:content :language :name] (cons [] tokens))))})
 
+
+;;
+;; PB :empty tag useful at insert stage but useless after : mass removal after tree built
 (defn line->node[line]
   (let [tokens (remove empty? (seq (.split line " ")))
         ;; detect if special line : starts with markers
@@ -33,18 +51,24 @@
 
 (defn append[loc line]
   (let [node (line->node line)]
-    (cond (and (:text node)
+    (cond (and (:text node) (not (:empty node))
                (#{:paragraph :code} (:type (z/node loc)))) ;;text to append to existing text node
           (z/edit loc update-in [:content] conj (:text node))
           (and (not (:empty node)) (:text node));;create paragraph with an non-empty line
-          (append-node loc (assoc node :type :paragraph))
+          (append-node loc
+                       (-> node
+                           (assoc :type :paragraph)
+                           (assoc :content [(:text node)])
+                           (dissoc :text)))
           ;;detect end of paragraph or end of code
           (or (and (:empty node) (= :paragraph (:type (z/node loc))))
               (= :code (:type node) (:type (z/node loc))))
           (z/up loc)
           ;;TODO handle list and section hierarchy
-          :else ;;just insert new child 
-          (append-node loc node)          
+          (not (:empty node)) ;;just insert new child 
+          (append-node loc node)
+          :else ;;do nothing
+          loc
           )))
     
 (defn transform[coll]
