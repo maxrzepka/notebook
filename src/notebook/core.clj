@@ -49,6 +49,15 @@
 (defn append-node[loc node]
   (-> loc (z/append-child node) z/down z/rightmost))
 
+
+(defn parent
+  "Returns first  parent of loc where pred is true , returns nil if no parent found"
+  [loc pred]
+  (loop [loc loc]
+    (cond (-> loc z/node pred) loc
+          (nil? loc) nil
+          :else (recur (z/up parent)))))
+  
 (defn append[loc line]
   (let [node (line->node line)]
     (cond (and (:text node) (not (:empty node))
