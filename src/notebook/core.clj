@@ -34,7 +34,7 @@
 
 
 ;;
-;; PB :empty tag useful at insert stage but useless after : mass removal after tree built
+;; PB :empty tag useful at insert stage but useless after : massive removal at the
 (defn line->node[line]
   (let [tokens (remove empty? (seq (.split line " ")))
         ;; detect if special line : starts with markers
@@ -46,20 +46,23 @@
              {:text line})
       :empty (nil? (seq tokens)))))
 
-(defn append-node[loc node]
+(defn append-node
+  [loc node]
+  {:pre [(not (nil? loc)) (not (nil? node))]}
   (-> loc (z/append-child node) z/down z/rightmost))
 
 
-(defn parent
+(defn parent-loc
   "Returns first  parent of loc where pred is true , returns nil if no parent found"
   [loc pred]
   (loop [loc loc]
-    (cond (-> loc z/node pred) loc
-          (nil? loc) nil
-          :else (recur (z/up parent)))))
+    (cond (nil? (z/up loc)) loc ;;by default return root if nothing found
+          (-> loc z/node pred) loc     
+          :else (recur (z/up loc)))))
   
 (defn append[loc line]
   (let [node (line->node line)]
+    ;;(swank.core/break)
     (cond (and (:text node) (not (:empty node))
                (#{:paragraph :code} (:type (z/node loc)))) ;;text to append to existing text node
           (z/edit loc update-in [:content] conj (:text node))
@@ -74,6 +77,16 @@
               (= :code (:type node) (:type (z/node loc))))
           (z/up loc)
           ;;TODO handle list and section hierarchy
+          (-> node :type (= :section));; handle list and section
+          (let [par (parent-loc loc #(and % (= (:type %) :section)
+                                               (= (:depth %) (dec (:depth node)))))]
+            (append-node par node))
+          (-> node :type (= :list-item));; child of upper list or closest upper section
+          (if-let [par (parent-loc loc #(or (= (:type %) :section)
+                                            (and % (= (:type %) :list-item)
+                                                 (= (:depth %) (dec (:depth node))))))]
+            (append-node par node)
+            (append-node loc node))          
           (not (:empty node)) ;;just insert new child 
           (append-node loc node)
           :else ;;do nothing
