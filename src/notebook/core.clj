@@ -14,7 +14,7 @@
 
 ;; define all type of marker lines ( section , list , code )
 ;; A line is a marker line if starting with specific string otherwise line is a plain line
-(def markers {:section "#" :list-item "+" :code "'''"})
+(def markers {:section "#" :list-item "+" :code "'''" :quote ">" :tag "%"})
 
 ;; For each type of marker line extract information from the line to build node map
 ;; only use by line->node 
@@ -22,6 +22,8 @@
 ;;  tokens -> [mark tokens]
 (def parsers {:section (fn[tokens] {:depth (count (first tokens)) :title (join-str " " (next tokens)) :content []})
               :list-item (fn[tokens] {:depth (count (first tokens)) :title (join-str " " (next tokens)) :text []})
+              :tag (fn[tokens] {:tags (rest tokens)})
+              :quote (fn[tokens] {:text (join-str " " (rest tokens)) :content [(join-str " " (rest tokens))]}) ;;TODO trim quote at the beginning
               :code (fn[tokens]
                       (let [mark (:code markers)
                             ;;common pattern : extract mark from tokens (cf todo)
@@ -34,8 +36,13 @@
 
 
 ;;
-;; PB :empty tag useful at insert stage but useless after : massive removal at the
-(defn line->node[line]
+;; PB :empty entry useful at insert stage but useless after : massive removal at the
+(defn line->node
+  "converts a plain text line to a node (ie a map) ,
+   line without special marks gives {:text line}
+   :empty detects empty line
+   "
+  [line]
   (let [tokens (remove empty? (seq (.split line " ")))
         ;; detect if special line : starts with markers
         markers (zipmap (vals markers) (keys markers))
@@ -47,6 +54,7 @@
       :empty (nil? (seq tokens)))))
 
 (defn append-node
+  "Append node as rightmost children of loc and move to this node"
   [loc node]
   {:pre [(not (nil? loc)) (not (nil? node))]}
   (-> loc (z/append-child node) z/down z/rightmost))
@@ -60,20 +68,27 @@
           (-> loc z/node pred) loc     
           :else (recur (z/up loc)))))
   
-(defn append[loc line]
+(defn append
+  "appends node to the zipper at location loc based on kind of
+   Contains dispatch logic to insert node in zipper
+  "
+  [loc line]
   (let [node (line->node line)]
-    ;;(swank.core/break)
-    (cond (and (:text node) (not (:empty node))
-               (#{:paragraph :code} (:type (z/node loc)))) ;;text to append to existing text node
+    (cond (and (:text node) (or (not (:empty node)) (= :quote (:type node)))
+               (or (not (:type node)) (= (:type node) (-> loc z/node :type)))
+               (#{:paragraph :code :quote} (:type (z/node loc))));;text to append to existing text node
           (z/edit loc update-in [:content] conj (:text node))
           (and (not (:empty node)) (:text node));;create paragraph with an non-empty line
           (append-node loc
                        (-> node
-                           (assoc :type :paragraph)
+                           (assoc :type (:type node :paragraph))
                            (assoc :content [(:text node)])
                            (dissoc :text)))
-          ;;detect end of paragraph or end of code
-          (or (and (:empty node) (= :paragraph (:type (z/node loc))))
+          ;;(and ()) ;;create quote 
+          ;;detect end of paragraph , code or quote
+          (or (and (:empty node)
+                   (#{:quote :paragraph } (:type (z/node loc))))
+              ;; closing/new code mark 
               (= :code (:type node) (:type (z/node loc))))
           (z/up loc)
           ;;TODO handle list and section hierarchy
@@ -87,18 +102,22 @@
                                                  (= (:depth %) (dec (:depth node))))))]
             (append-node par node)
             (append-node loc node))          
-          (not (:empty node)) ;;just insert new child 
-          (append-node loc node)
+          (not (:empty node)) ;;just insert new child
+          (if (:content node)
+            (append-node loc node)
+            (-> loc (append-node node) z/up))
           :else ;;do nothing
           loc
           )))
     
-(defn transform[coll]
+(defn transform
+  "From a sequence of lines in markdown format returns a map where :content stores text or nodes , :type "
+  [lines]
   (z/root
     (reduce append
             (z/zipper :content (comp seq :content) #(assoc %1 :content %2)
-                      {:current :note :type :note :content []})
-            coll)))
+                      {:type :note :content []})
+            lines)))
 
 (comment
   user> (n/append {:current :note :type :note :content []} "# title ")

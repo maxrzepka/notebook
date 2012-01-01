@@ -8,7 +8,7 @@
 
 (deftest test-hierarchy-4-section
   (is (= (transform ["# title" "line 1" "## sub 1" "" "sub line 1" "" "## sub 2" "" "sub line 2"])
-         {:current :note, :type :note,
+         {:type :note,
           :content
           [{:empty false,:type :section, :depth 1,:title "title",
             :content
