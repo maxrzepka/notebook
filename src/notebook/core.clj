@@ -61,7 +61,7 @@
 
 
 (defn parent-loc
-  "Returns first  parent of loc where pred is true , returns nil if no parent found"
+  "Returns first  parent of loc where pred is true , returns root if no parent found"
   [loc pred]
   (loop [loc loc]
     (cond (nil? (z/up loc)) loc ;;by default return root if nothing found
@@ -73,42 +73,47 @@
    Contains dispatch logic to insert node in zipper
   "
   [loc line]
-  (let [node (line->node line)]
-    (cond (and (:text node) (or (not (:empty node)) (= :quote (:type node)))
-               (or (not (:type node)) (= (:type node) (-> loc z/node :type)))
-               (#{:paragraph :code :quote} (:type (z/node loc))));;text to append to existing text node
-          (z/edit loc update-in [:content] conj (:text node))
-          (and (not (:empty node)) (:text node));;create paragraph with an non-empty line
-          (append-node loc
-                       (-> node
-                           (assoc :type (:type node :paragraph))
-                           (assoc :content [(:text node)])
-                           (dissoc :text)))
-          ;;(and ()) ;;create quote 
-          ;;detect end of paragraph , code or quote
-          (or (and (:empty node)
-                   (#{:quote :paragraph } (:type (z/node loc))))
-              ;; closing/new code mark 
-              (= :code (:type node) (:type (z/node loc))))
-          (z/up loc)
-          ;;TODO handle list and section hierarchy
-          (-> node :type (= :section));; handle list and section
-          (let [par (parent-loc loc #(and % (= (:type %) :section)
-                                               (= (:depth %) (dec (:depth node)))))]
-            (append-node par node))
-          (-> node :type (= :list-item));; child of upper list or closest upper section
-          (if-let [par (parent-loc loc #(or (= (:type %) :section)
-                                            (and % (= (:type %) :list-item)
-                                                 (= (:depth %) (dec (:depth node))))))]
-            (append-node par node)
-            (append-node loc node))          
-          (not (:empty node)) ;;just insert new child
-          (if (:content node)
-            (append-node loc node)
-            (-> loc (append-node node) z/up))
-          :else ;;do nothing
-          loc
-          )))
+  (let [node (line->node line)
+        current-type (-> loc z/node :type)]
+;;    (swank.core/break)
+    (cond ;;text to append to current node
+     (or (and (= :paragraph current-type)
+              (not (:empty node)) ;; append to paragraph if non empty plain line
+              (nil? (:type node)))
+         (= :quote (:type node) current-type) ;;append to quote if new line is a quote also
+         (and (= :code (-> loc z/node node)) ;;append to code node if not end of code
+              (not= :code (:type node))))
+     (z/edit loc update-in [:content] conj (:text node))
+     (and (not (:empty node)) (:text node));;create paragraph with an non-empty line
+     (append-node (if (= :quote current-type) (z/up loc) loc)
+                  (-> node
+                      (assoc :type (:type node :paragraph))
+                      (assoc :content [(:text node)])
+                      (dissoc :text)))
+     ;;detect end of paragraph , code or quote
+     (or (and (:empty node)
+              (= :paragraph (:type (z/node loc))))
+         ;; closing/new code mark 
+         (= :code (:type node) (:type (z/node loc))))
+     (z/up loc)
+     (= :section (:type node));; handle list and section
+     (let [par (parent-loc loc #(and % (= (:type %) :section)
+                                     (= (:depth %) (dec (:depth node)))))]
+       (append-node par node))
+     (= :list-item (:type node));; child of upper list or closest upper section
+     (if-let [par (parent-loc loc #(or (= (:type %) :section)
+                                       (and % (= (:type %) :list-item)
+                                            (= (:depth %) (dec (:depth node))))))]
+       (append-node par node)
+       (append-node loc node))
+     (= :tag (:type node)) ;; append tags information to map
+     (z/edit loc assoc :tags (:tags node))
+     (not (:empty node)) ;;just insert new child
+     (if (:content node)
+       (append-node loc node)
+       (-> loc (append-node node) z/up)) ;;append to parent if current node do not accept children
+     :else ;;do nothing
+     loc)))
     
 (defn transform
   "From a sequence of lines in markdown format returns a map where :content stores text or nodes , :type "
