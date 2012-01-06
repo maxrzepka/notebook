@@ -1,5 +1,6 @@
 (ns notebook.core
   (require [clojure.java.io :as io]
+           [net.cgrand.enlive-html :as html] 
            [clojure.zip :as z]))
 
 (defn file-resource[path]
@@ -114,17 +115,67 @@
        (-> loc (append-node node) z/up)) ;;append to parent if current node do not accept children
      :else ;;do nothing
      loc)))
-    
+
+(defn note->zip[note]
+  (z/zipper :content (comp seq :content) #(assoc %1 :content %2)
+            note))
+
 (defn transform
   "From a sequence of lines in markdown format returns a map where :content stores text or nodes , :type "
   [lines]
   (z/root
     (reduce append
-            (z/zipper :content (comp seq :content) #(assoc %1 :content %2)
-                      {:type :note :content []})
+            (note->zip {:type :note :content []})
             lines)))
 
+(html/defsnippet section-model "note.html" [ [:.section (html/nth-of-type 1)]]
+  [{title :title content :content}]
+  [:h2] (html/content title)
+  [:.content] content)
+
+(html/defsnippet paragraph-model "note.html" [ [:.paragraph (html/nth-of-type 1)]]
+  [{content :content}]
+  [:p] content)
+
+(html/defsnippet code-model "note.html" [ [:.code (html/nth-of-type 1)]]
+  [{content :content}]
+  [:pre] (html/content content))
+
+(html/defsnippet text-model "note.html" [:.text]
+  [{type :type content :content}]
+;  [] (html/add-class type)
+  [:p] (html/content content))
+
+(defn node->layout[{type :type :as node}]
+  ((condp type
+       :section section-model
+       :code code-model
+       :else text-model) node))
+
+(html/deftemplate note-layout "note.html" [note]
+  [:#main] (html/content (loop [loc (note->zip note)]
+                           (if (z/end? loc)
+                             (z/root loc)
+                             (recur (z/next (z/replace loc (node->layout (z/node loc)))))))))
+  
+
+
 (comment
+
+  "why ?"
+  (html/select (html/html-resource "note.html") [ [:.text (html/nth-of-type 1)]])
+user> (html/select (html/html-resource "note.html") [ [:.section (html/nth-of-type 1)]])
+({:tag :div, :attrs {:class "section"}, :content ("\n        " {:tag :h2, :attrs {:class "title"}, :content ("Section 1")} "\n        " {:tag :div, :attrs {:class "content"}, :content ("\n          " {:tag :p, :attrs nil, :content (" Some text")} "\n        ")} "\n      ")})
+user> (html/select (html/html-resource "note.html") [ [:.text (html/nth-of-type 1)]])
+()
+user> (html/select (html/html-resource "note.html") [ [:.code (html/nth-of-type 1)]])
+()
+user> (html/select (html/html-resource "note.html") [:.text])
+({:tag :div, :attrs {:class "text"}, :content ("\n        " {:tag :p, :attrs nil, :content ("some paragraph")} {:tag :p, :attrs nil, :content ("\n      ")})})
+user>  (html/select (html/html-resource "note.html") [ [:.text (html/nth-of-type 1)]])
+()
+
+  
   user> (n/append {:current :note :type :note :content []} "# title ")
 {:current :empty, :type :note, :content [{:type :section, :depth 1, :title "title", :content []}]}
 user> (def n4 (n/append {:current :note :type :note :content []} "# title "))
