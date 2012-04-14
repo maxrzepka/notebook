@@ -1,4 +1,4 @@
-(ns notebook.core
+(ns notebook.parser
   (require [clojure.java.io :as io]
            [net.cgrand.enlive-html :as html] 
            [clojure.zip :as z]))
@@ -68,7 +68,74 @@
     (cond (nil? (z/up loc)) loc ;;by default return root if nothing found
           (-> loc z/node pred) loc     
           :else (recur (z/up loc)))))
-  
+
+(defn decide-action
+  "returns keyword action how to integrate next-node : :end :append-text :assoc :node :child :ignore"
+  [node next-node]
+  (let [type (:type node)
+        next-type (:type next-node)]
+    (cond
+     (or (and (= :paragraph type)
+              (not (:empty next-node)) ;; text of paragraph
+              (nil? next-type))
+         (= :quote next-type type) ;;text of quote
+         (and (= :code type) ;;text in code 
+              (not= :code next-type)))
+     :append-text
+     (and (not (:empty next-node)) (:text next-node));;new paragraph
+     :new-paragraph
+    ;;detect end of paragraph , code or quote
+     (or (and (:empty next-node)
+              (= :paragraph type))
+         ;; closing/new code mark 
+         (= :code type next-type))
+     :end  ;; (z/up loc)
+     (#{:section :list-item :tag} next-type) 
+     next-type
+     (not (:empty next-node)) ;;just insert new child
+     :node
+     :else ;;do nothing
+     :ignore
+     )))
+
+(def actions {:new-paragraph (fn[{text :text} b] {:type :paragraph :content [text]})
+              :node (fn[a b] a)
+              :append-text (fn[{text :text} b] (update-in b [:content] conj text))
+              :ignore (fn[a b] b)
+              :end (fn[a b] nil)
+              :section (fn[a b] a)})
+
+(defn add-line
+  "Adds line in note  at location loc"
+  [loc line]
+  (let [new-node (line->node line)
+        node (z/node loc)]
+    (condp (decide-action node new-node)
+      :append-text
+      (z/edit loc update-in [:content] conj (:text new-node))
+      :new-paragraph  
+      (append-node (if (= :quote (:type node)) (z/up loc) loc)
+                   (-> new-node
+                      (assoc :type (:type new-node :paragraph))
+                      (assoc :content [(:text new-node)])
+                      (dissoc :text)))
+      :node
+      (if (:content node)
+        (append-node loc new-node)
+        (-> loc (append-node new-node) z/up)) ;;append to parent if current node do not accept children 
+      :tag
+      (z/edit loc assoc :tags (:tags new-node))      
+      :end
+      (z/up loc)      
+      :ignore
+      loc
+      :section
+      (let [par (parent-loc loc #(and % (= (:type %) :section)
+                                     (= (:depth %) (dec (:depth new-node)))))]
+        (append-node par new-node))
+      :else
+      loc)))
+
 (defn append
   "appends node to the zipper at location loc based on kind of
    Contains dispatch logic to insert node in zipper
@@ -82,7 +149,7 @@
               (not (:empty node)) ;; append to paragraph if non empty plain line
               (nil? (:type node)))
          (= :quote (:type node) current-type) ;;append to quote if new line is a quote also
-         (and (= :code (-> loc z/node node)) ;;append to code node if not end of code
+         (and (= :code (z/node loc)) ;;append to code node if not end of code
               (not= :code (:type node))))
      (z/edit loc update-in [:content] conj (:text node))
      (and (not (:empty node)) (:text node));;create paragraph with an non-empty line
@@ -120,13 +187,27 @@
   (z/zipper :content (comp seq :content) #(assoc %1 :content %2)
             note))
 
-(defn transform
+(defn lines->note
   "From a sequence of lines in markdown format returns a map where :content stores text or nodes , :type "
   [lines]
   (z/root
-    (reduce append
+    (reduce add-line
             (note->zip {:type :note :content []})
             lines)))
+
+(defn node->layout[{type :type :as node}]
+  ((condp type
+       :section section-model
+       :code code-model
+       :else text-model) node))
+
+(defn tree-edit[zip f]
+  (loop [loc (z/next zip)]
+    (if (z/end? loc)
+      (z/root loc)
+;      (do (swank.core/break)
+      (recur (z/next (z/edit loc f))))))
+
 
 (html/defsnippet section-model "note.html" [ [:.section (html/nth-of-type 1)]]
   [{title :title content :content}]
@@ -137,20 +218,14 @@
   [{content :content}]
   [:p] content)
 
-(html/defsnippet code-model "note.html" [ [:.code (html/nth-of-type 1)]]
+(html/defsnippet code-model "note.html" [:.code]
   [{content :content}]
   [:pre] (html/content content))
 
 (html/defsnippet text-model "note.html" [:.text]
   [{type :type content :content}]
-;  [] (html/add-class type)
+  [] (html/add-class type)
   [:p] (html/content content))
-
-(defn node->layout[{type :type :as node}]
-  ((condp type
-       :section section-model
-       :code code-model
-       :else text-model) node))
 
 (html/deftemplate note-layout "note.html" [note]
   [:#main] (html/content (loop [loc (note->zip note)]
@@ -175,7 +250,9 @@ user> (html/select (html/html-resource "note.html") [:.text])
 user>  (html/select (html/html-resource "note.html") [ [:.text (html/nth-of-type 1)]])
 ()
 
-  
+)
+
+(comment
   user> (n/append {:current :note :type :note :content []} "# title ")
 {:current :empty, :type :note, :content [{:type :section, :depth 1, :title "title", :content []}]}
 user> (def n4 (n/append {:current :note :type :note :content []} "# title "))
