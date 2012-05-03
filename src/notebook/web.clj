@@ -7,7 +7,7 @@
         [ring.middleware.keyword-params :only [wrap-keyword-params]]
 ;        [ring.middleware.reload :only [wrap-reload]]
         [ring.middleware.session :only [wrap-session]]
-        [ring.middleware.file :only [wrap-file]]           
+        [ring.middleware.file :only [wrap-file]]
         [ring.util.response :only [response file-response redirect]]
         [ring.adapter.jetty :only [run-jetty]]))
 
@@ -32,7 +32,8 @@ or standard mongodb://localhost:27017/test
      #(do
        (assert (= {:db "test", :port "27017", :host "localhost", :type "mongodb"}
               (split-mongo-url "mongodb://localhost:27017/test")))
-       (assert (= {:db "db", :port "1234", :host "localhost", :pass "pass", :user "user", :type "mongodb"}
+       (assert (= {:db "db", :port "1234", :host "localhost", :pass "pass"
+                   , :user "user", :type "mongodb"}
               (split-mongo-url "mongodb://user:pass@localhost:1234/db"))))
    }
   (let [infos (clojure.string/split url #"[/:@]+")]
@@ -44,10 +45,12 @@ or standard mongodb://localhost:27017/test
 (defn db-init []
   "Checks if connection, otherwise initialize."
   (when (not (m/connection? *mongo-config*)) ;; If global connection doesn't exist yet.
-    (let [mongo-url (get (System/getenv) "MONGOHQ_URL" "mongodb://localhost:27017/test") ;; Heroku puts it here.
+    (let [mongo-url (get (System/getenv)
+                         "MONGOHQ_URL" "mongodb://localhost:27017/test") ;; Heroku puts it here.
           config (split-mongo-url mongo-url)] ;; Extract options.
       (println "Initializing mongo @ " mongo-url)
-      (m/mongo! :db (:db config) :host (:host config) :port (Integer. (:port config))) ;; Setup global mongo.
+      (m/mongo! :db (:db config) :host (:host config)
+                :port (Integer. (:port config))) ;; Setup global mongo.
       (when (:user config)
         (m/authenticate (:user config) (:pass config)))))) ;; Setup u/p.
 
@@ -94,13 +97,13 @@ or standard mongodb://localhost:27017/test
 ;;one HMTL page containing HTML form ,
 (html/defsnippet note-view "notebook.html" [:#note ]
   [{text :text tags :tags}]
-  ;;insert into input text values if existing 
+  ;;insert into input text values if existing
   [[:p (html/nth-of-type 1)]] (html/content text)
   [[:p (html/nth-of-type 2)]] (html/content (coll->str tags)))
 
 (html/defsnippet note-form "notebook.html" [:#enote]
   [{text :text tags :tags}]
-  ;;insert into input text values if existing 
+  ;;insert into input text values if existing
   [:textarea] (html/content text)
   [:input] (html/content (coll->str tags)))
 
@@ -130,14 +133,25 @@ or standard mongodb://localhost:27017/test
 (defn login?[ {session :session }]
   (and session (:current-user session)))
 
+
+;;
+;; TODO move to mapreduce job to count tags
+;; First attempt
+;;  m = function() { var e = this.tags || [] ;if( e.forEach ){e.forEach(function(value){ emit(this.value,1);}} )};
+;;  r = function(key, values) { var res = { key: 0}; values.forEach(function(value){ res.key += value;});}
+;;
+;;
 (defn save-note
   "Only save note when use logged in"
   [{params :params :as req}]
   (if (login? req)
-    (render-to-response (list-view
-                         (save :notes (update-in params [:tags] (fnil str->coll [])))))
+    (let [tags (str->coll (:tags params ""))
+          params (assoc params :tags tags)]
+      (doseq [tag tags]
+        (m/fetch-and-modify :tags {:_id tag} {:$inc {:value 1}} :upsert? true))
+      (render-to-response (list-view
+                         (save :notes params))))
     (redirect "/login")))
-
 
 ;; Description of the application
 (def routes
@@ -151,7 +165,10 @@ or standard mongodb://localhost:27017/test
    ["login"] {:get (render-request login) :post authentificate}
    ["note"] {:get (render-request edit-view nil) :post save-note}
    ["notes" & tags] (render-request list-view (fetch :notes :tags tags))
-   ["note" id] {:get (render-request edit-view (fetch :notes :id id)) :post save-note }))
+   ["note" id] {:get (render-request edit-view (fetch :notes :id id)) :post save-note}
+   [&] (constantly (redirect "/notes"))
+   ))
+
 
 (defn start [ & [port & options]]
   (run-jetty (var routes) {:port (or port 8080) :join? false}))
