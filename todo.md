@@ -1,11 +1,26 @@
+* Menu to access notes by tags
+  - href values correctly populated in nav list
+  - add sub menu :
+        define category ( tag most often used )
+        sub menu contains any tags associated with this category
+  - search notes by tag
 
- * populate href values in nav list 
- * display username when user logged in
- * update edit href
- * set up loggs : for dev ( log request details ) 
+* Authentification only for update and create :
+  - display username when user logged in
+  - add list of valid username in DB : users collection
+  - oauth2 authentification or encrypted password in DB
 
- * design memo workflow
-  * select notes to memorize (note having tag memo)
-  * notes can have question/answer
-  * display the notes to be viewed/memorized now
-  * rate a note after viewing and compute date of next display
+* Memo workflow :
+  - select tags to get the notes to be part of a memo session
+  - tags like citation , qa are candidate for a memo session
+  - view the pending items of a memo session
+  - rate them
+  - change a citation to a QA : find tags in text
+
+* Local mode :
+   - plain clj file as DB
+   - sync  mongoDB with clj file and save the file as resource
+
+* Handle error : no db  connection
+
+* Edit existing note , link to create new note

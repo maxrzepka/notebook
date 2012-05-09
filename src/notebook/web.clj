@@ -8,6 +8,7 @@
 ;        [ring.middleware.reload :only [wrap-reload]]
         [ring.middleware.session :only [wrap-session]]
         [ring.middleware.file :only [wrap-file]]
+        [ring.middleware.stacktrace :only [wrap-stacktrace]]
         [ring.util.response :only [response file-response redirect]]
         [ring.adapter.jetty :only [run-jetty]]))
 
@@ -96,13 +97,15 @@ or standard mongodb://localhost:27017/test
 
 ;;one HMTL page containing HTML form ,
 (html/defsnippet note-view "notebook.html" [:#note ]
-  [{text :text tags :tags}]
+  [{:keys [text tags _id] }]
   ;;insert into input text values if existing
   [[:p (html/nth-of-type 1)]] (html/content text)
-  [[:p (html/nth-of-type 2)]] (html/content (coll->str tags)))
+  [[:p (html/nth-of-type 2)]] (html/content (coll->str tags))
+  [:a.btn] (html/set-attr :href (str "./note/" _id)))
+
 
 (html/defsnippet note-form "notebook.html" [:#enote]
-  [{text :text tags :tags}]
+  [{:keys [id text tags]}]
   ;;insert into input text values if existing
   [:textarea] (html/content text)
   [:input] (html/content (coll->str tags)))
@@ -133,13 +136,13 @@ or standard mongodb://localhost:27017/test
 (defn login?[ {session :session }]
   (and session (:current-user session)))
 
-
 ;;
 ;; TODO move to mapreduce job to count tags
 ;; First attempt
-;;  m = function() { var e = this.tags || [] ;if( e.forEach ){e.forEach(function(value){ emit(this.value,1);}} )};
-;;  r = function(key, values) { var res = { key: 0}; values.forEach(function(value){ res.key += value;});}
-;;
+;;  m = function() { var e = this.tags || [] ;
+;; if( e.forEach ){e.forEach(function(value){ emit(this.value,1);}} )};
+;;  r = function(key, values) { var res = { key: 0};
+;;           values.forEach(function(value){ res.key += value;});}
 ;;
 (defn save-note
   "Only save note when use logged in"
@@ -158,6 +161,7 @@ or standard mongodb://localhost:27017/test
   (app
 ;   (wrap-reload '[notebook.web])
    (wrap-file "resources")
+   (wrap-stacktrace)
    (wrap-always db-init)
    (wrap-session)
    (wrap-params)
