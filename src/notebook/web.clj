@@ -55,11 +55,31 @@ or standard mongodb://localhost:27017/test
       (when (:user config)
         (m/authenticate (:user config) (:pass config)))))) ;; Setup u/p.
 
+(defn refresh-tag-counters []
+  (let [tags (frequencies (mapcat :tags (m/fetch :notes)))]
+    (do (m/destroy! :tags {})
+        (m/mass-insert! :tags (map (fn[[t c]] (hash-map :_id t :total c)) tags))
+      )))
+
+(defn update-tag-counters [oldtags newtags]
+  (doseq [tag (seq oldtags)]
+      (m/fetch-and-modify :tags {:_id tag} {:$inc {:total -1}}))
+  (doseq [tag (seq newtags)]
+    (m/fetch-and-modify :tags {:_id tag} {:$inc {:total 1}} :upsert? true)))
 
 (defn save [collection item]
-  (m/insert! collection item))
+  ;;update tag counters for note
+  (if (= :notes collection)
+    (update-tag-counters (:tags (m/fetch-by-id :notes (:_id item))) (:tags item)))
+  (m/fetch-and-modify collection
+                            {:_id (:_id item)}
+                            (dissoc item :_id)
+                            :upsert? true
+                            :return-new? true))
 
-(defn fetch [collection & {:keys [id tags]}]
+(defn fetch
+  "Fetch mongodb collection"
+  [collection & {:keys [id tags]}]
   (if id
     (m/fetch-one collection :where {:_id (m/object-id id)})
     (m/fetch collection :where (if (seq tags) { :tags {:$in tags}} nil))))
@@ -81,13 +101,6 @@ or standard mongodb://localhost:27017/test
 (defn prepend-attrs [att prefix]
   (fn[node] (update-in node [:attrs att] (fn[v] (str prefix v)))))
 
-(defmacro mydeftemplate
-  "Same as deftemplate but make resources url absolute ( prepend / )"
-  [name source args & forms]
-  `(html/deftemplate ~name ~source ~args
-     [[:link (html/attr= :rel "stylesheet")]] (prepend-attrs :href "/")
-     ~@forms))
-
 (defn coll->str [coll]
   (if (string? coll) coll (clojure.string/join " , " coll)))
 
@@ -95,35 +108,54 @@ or standard mongodb://localhost:27017/test
   (if (string? s) (clojure.string/split s #"[\W]+") s))
 
 
-;;one HMTL page containing HTML form ,
 (html/defsnippet note-view "notebook.html" [:#note ]
   [{:keys [text tags _id] }]
   ;;insert into input text values if existing
   [[:p (html/nth-of-type 1)]] (html/content text)
   [[:p (html/nth-of-type 2)]] (html/content (coll->str tags))
-  [:a.btn] (html/set-attr :href (str "./note/" _id)))
+  [:a.btn] (html/set-attr :href (str "/note/" _id)))
 
 
 (html/defsnippet note-form "notebook.html" [:#enote]
-  [{:keys [id text tags]}]
+  [{:keys [_id text tags]}]
   ;;insert into input text values if existing
+  [[:input (html/attr= :name "_id")]] (html/set-attr :value _id)
   [:textarea] (html/content text)
-  [:input] (html/content (coll->str tags)))
+  [[:input (html/attr= :name "tags")]] (html/set-attr :value (coll->str tags)))
 
 (html/defsnippet login-form "notebook.html" [:#login] [])
 
-(mydeftemplate login "notebook.html" []
-  [:#content] (html/content (login-form)))
+(html/defsnippet menu-item "notebook.html" [:ul#menu [:li html/first-child]]
+  [{:keys [active url title]}]
+  [html/root] (if active (html/add-class "active") (html/remove-class "active"))
+  [:a] (html/do->  (html/set-attr :href url)
+                   (html/content title)))
 
-;; TODO how to populate nav list : append path into href for each entry of navigation bar
-(mydeftemplate edit-view "notebook.html" [note]
-  [:#content] (html/content (note-form note)))
+(html/defsnippet status "notebook.html" [:#status]
+  [user]
+  [:a] (if user
+         (html/substitute (str "Logged in as " user))
+           (html/do-> (html/set-attr :href "/login")
+                      (html/content "Login"))))
 
-;;
-(mydeftemplate list-view "notebook.html" [notes]
-  [:#content] (html/content (map note-view (if (seq? notes) notes [notes]))))
+(html/deftemplate main "notebook.html" [{:keys [content menu status]}]
+  [[:link (html/attr= :rel "stylesheet")]] (prepend-attrs :href "/")
+  [:#status] (html/content status)
+  [:#menu] (html/content menu)
+  [:#content] (html/content content))
 
-;;
+(defn build-tag-link [tag]
+  {:url (str "/notes/" (:_id tag))
+   :title (str (:_id tag) " (" (:total tag) ")")})
+
+;;TODO set active if uri match a tag
+(defn build-menu [uri]
+  (map menu-item
+       (concat
+        (map build-tag-link
+         (m/fetch :tags :sort {:_id 1}))
+        (list {:url "/note" :title "Create Note"}))))
+
 ;; Add session key to initiate a session
 ;; TODO implement custom session storage (mongo) instead of in mem
 ;;
@@ -133,28 +165,31 @@ or standard mongodb://localhost:27017/test
       :session {:current-user user})
     ))
 
-(defn login?[ {session :session }]
-  (and session (:current-user session)))
+(defn logged[req]
+  (-> req :session :current-user))
 
-;;
-;; TODO move to mapreduce job to count tags
-;; First attempt
-;;  m = function() { var e = this.tags || [] ;
-;; if( e.forEach ){e.forEach(function(value){ emit(this.value,1);}} )};
-;;  r = function(key, values) { var res = { key: 0};
-;;           values.forEach(function(value){ res.key += value;});}
-;;
+;; how to handle if view not found
+(def views {:login (fn [& _] (login-form))
+            :edit note-form
+            :list (fn [notes] (map note-view (if (seq? notes) notes [notes])))})
+
+(defn render-view
+  ([type] (render-view type nil))
+  ([type data]
+     (fn [req] (render-to-response
+                (main {:content ((views type) data)
+                       :menu (build-menu (:uri req))
+                       :status (status (logged req))})))))
+
 (defn save-note
   "Only save note when use logged in"
   [{params :params :as req}]
-  (if (login? req)
-    (let [tags (str->coll (:tags params ""))
-          params (assoc params :tags tags)]
-      (doseq [tag tags]
-        (m/fetch-and-modify :tags {:_id tag} {:$inc {:value 1}} :upsert? true))
-      (render-to-response (list-view
-                         (save :notes params))))
+  (if (logged req)
+    (let [note (save :notes (update-in params [:tags] (fnil str->coll"")))]
+      (render-view :list note))
     (redirect "/login")))
+
+
 
 ;; Description of the application
 (def routes
@@ -166,10 +201,10 @@ or standard mongodb://localhost:27017/test
    (wrap-session)
    (wrap-params)
    (wrap-keyword-params)
-   ["login"] {:get (render-request login) :post authentificate}
-   ["note"] {:get (render-request edit-view nil) :post save-note}
-   ["notes" & tags] (render-request list-view (fetch :notes :tags tags))
-   ["note" id] {:get (render-request edit-view (fetch :notes :id id)) :post save-note}
+   ["login"] {:get (render-view :login) :post authentificate}
+   ["note"] {:get (render-view :edit) :post save-note}
+   ["notes" & tags] (render-view :list (fetch :notes :tags tags))
+   ["note" id] {:get (render-view :edit (fetch :notes :id id)) :post save-note}
    [&] (constantly (redirect "/notes"))
    ))
 

@@ -14,7 +14,7 @@
 
     <!-- Le styles -->
     <link href="css/bootstrap.css" rel="stylesheet">
-    
+
     <style type="text/css">
       body {
         padding-top: 10px;
@@ -27,7 +27,7 @@
     <!--
     <link href="../assets/css/bootstrap-responsive.css" rel="stylesheet">
     -->
-    <!-- Le fav and touch icons 
+    <!-- Le fav and touch icons
     <link rel="shortcut icon" href="images/favicon.ico">
     <link rel="apple-touch-icon" href="images/apple-touch-icon.png">
     <link rel="apple-touch-icon" sizes="72x72" href="images/apple-touch-icon-72x72.png">
@@ -39,8 +39,9 @@
     <div class="container-fluid">
       <div class="row-fluid">
         <div class="span2">
+          <div id="status"><a>Logged in as username</a></div>
           <div class="well sidebar-nav">
-            <ul class="nav nav-list">
+            <ul id="menu" class="nav nav-list">
               <li class="active"><a href="#">Latest</a></li>
               <li><a href="#">Clojure</a></li>
            </ul>
@@ -57,6 +58,7 @@
           <div class="row-fluid" id="enote">
 	    <form class="well" action="" method="post">
 	      <label>Note</label>
+          <input type="hidden" name="_id" value=""/>
 	      <textarea name="text" type="text" class="span8" rows="3" placeholder="Type something…"></textarea>
 	      <label>Tags
 	      <input name="tags" type="text" class="span8" placeholder="Several Tags should be comma separated"/>
@@ -80,12 +82,12 @@
                     </form>
                 </div>
             </div>
-	  
+
         </div><!--/span-->
       </div><!--/row-->
 
     </div><!--/.fluid-container-->
-    
+
 
   </body>
 </html>
